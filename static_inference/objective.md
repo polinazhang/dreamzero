@@ -1,0 +1,1 @@
+Implement static inference on DreamZero

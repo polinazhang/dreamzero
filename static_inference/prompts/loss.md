@@ -1,0 +1,1 @@
+For loss, you should just take the action flow matching loss and the video flow matching loss.
