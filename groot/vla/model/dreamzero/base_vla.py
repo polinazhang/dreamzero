@@ -348,7 +348,8 @@ class VLA(PreTrainedModel):
         safetensors_path = os.path.join(pretrained_model_name_or_path, "model.safetensors")
         safetensors_index_path = os.path.join(pretrained_model_name_or_path, "model.safetensors.index.json")
         
-        state_dict = {}
+        shard_files = None
+        state_dict = None
         if os.path.exists(safetensors_index_path):
             # Handle sharded safetensors
             print(f"Loading sharded safetensors using index: {safetensors_index_path}")
@@ -356,17 +357,15 @@ class VLA(PreTrainedModel):
             with open(safetensors_index_path, 'r') as f:
                 index = json.load(f)
             
-            # Load each shard
-            for shard_file in set(index["weight_map"].values()):
-                shard_path = os.path.join(pretrained_model_name_or_path, shard_file)
-                print(f"Loading shard: {shard_path}")
-                shard_state_dict = load_file(shard_path)
-                state_dict.update(shard_state_dict)
+            # Keep only the shard names here. Loading all shards into one state
+            # dict duplicates most of this large model in host memory on every
+            # distributed rank and can exceed common cluster memory limits.
+            shard_files = sorted(set(index["weight_map"].values()))
                 
         elif os.path.exists(safetensors_path):
             # Handle single safetensors file
             print(f"Loading weights from safetensors: {safetensors_path}")
-            state_dict.update(load_file(safetensors_path))
+            state_dict = load_file(safetensors_path)
         
         # Load config
         print("loading config@@")
@@ -422,7 +421,8 @@ class VLA(PreTrainedModel):
         safetensors_path = os.path.join(pretrained_model_name_or_path, "model.safetensors")
         safetensors_index_path = os.path.join(pretrained_model_name_or_path, "model.safetensors.index.json")
 
-        state_dict = {}
+        shard_files = None
+        state_dict = None
         if os.path.exists(safetensors_index_path):
             # Handle sharded safetensors
             print(f"Loading sharded safetensors using index: {safetensors_index_path}")
@@ -430,17 +430,14 @@ class VLA(PreTrainedModel):
             with open(safetensors_index_path, 'r') as f:
                 index = json.load(f)
             
-            # Load each shard
-            for shard_file in set(index["weight_map"].values()):
-                shard_path = os.path.join(pretrained_model_name_or_path, shard_file)
-                print(f"Loading shard: {shard_path}")
-                shard_state_dict = load_file(shard_path)
-                state_dict.update(shard_state_dict)
+            # Defer opening shards until after model construction. Keeping every
+            # shard in a combined dict duplicates the checkpoint on each rank.
+            shard_files = sorted(set(index["weight_map"].values()))
                 
         elif os.path.exists(safetensors_path):
             # Handle single safetensors file
             print(f"Loading weights from safetensors: {safetensors_path}")
-            state_dict.update(load_file(safetensors_path))
+            state_dict = load_file(safetensors_path)
         else:
             raise FileNotFoundError(f"No valid checkpoint found at {pretrained_model_name_or_path}")
         
@@ -511,7 +508,8 @@ class VLA(PreTrainedModel):
         safetensors_path = os.path.join(pretrained_model_name_or_path, "model.safetensors")
         safetensors_index_path = os.path.join(pretrained_model_name_or_path, "model.safetensors.index.json")
 
-        state_dict = {}
+        shard_files = None
+        state_dict = None
         if os.path.exists(safetensors_index_path):
             # Handle sharded safetensors
             print(f"Loading sharded safetensors using index: {safetensors_index_path}")
@@ -519,17 +517,14 @@ class VLA(PreTrainedModel):
             with open(safetensors_index_path, 'r') as f:
                 index = json.load(f)
             
-            # Load each shard
-            for shard_file in set(index["weight_map"].values()):
-                shard_path = os.path.join(pretrained_model_name_or_path, shard_file)
-                print(f"Loading shard: {shard_path}")
-                shard_state_dict = load_file(shard_path)
-                state_dict.update(shard_state_dict)
+            # Defer opening shards until after model construction. Keeping every
+            # shard in a combined dict duplicates the checkpoint on each rank.
+            shard_files = sorted(set(index["weight_map"].values()))
                 
         elif os.path.exists(safetensors_path):
             # Handle single safetensors file
             print(f"Loading weights from safetensors: {safetensors_path}")
-            state_dict.update(load_file(safetensors_path))
+            state_dict = load_file(safetensors_path)
         
         # Load config
         print("loading config@@")
@@ -542,27 +537,46 @@ class VLA(PreTrainedModel):
         # Always disable defer_lora_injection
         # config.action_head_cfg is a dict, and defer_lora_injection is nested in config.action_head_cfg['config']
         if 'config' in config.action_head_cfg and isinstance(config.action_head_cfg['config'], dict):
+            config.action_head_cfg['config']['skip_component_loading'] = True
+            print("config.action_head_cfg['config']['skip_component_loading'] enabled (full checkpoint load)")
             if 'defer_lora_injection' in config.action_head_cfg['config']:
                 config.action_head_cfg['config']['defer_lora_injection'] = False
                 print("config.action_head_cfg['config']['defer_lora_injection'] disabled (set to False)")
         elif 'defer_lora_injection' in config.action_head_cfg:
+            config.action_head_cfg['skip_component_loading'] = True
+            print("config.action_head_cfg['skip_component_loading'] enabled (full checkpoint load)")
             config.action_head_cfg['defer_lora_injection'] = False
             print("config.action_head_cfg['defer_lora_injection'] disabled (set to False)")
 
         # Instantiate model
         model = cls(config)
-        print("model", model)
-        # Remove .base_layer from keys (e.g., 'action_head.model.base_model.model.blocks.19.self_attn.v.base_layer.bias' -> 'action_head.model.base_model.model.blocks.19.self_attn.v.bias')
-        has_base_layer = any(".base_layer." in key for key in state_dict.keys())
-        if has_base_layer:
-            print("Removing '.base_layer' from state dict keys")
-            new_state_dict = {}
-            for k, v in state_dict.items():
-                new_k = k.replace(".base_layer.", ".")
-                new_state_dict[new_k] = v
-            state_dict = new_state_dict
+        expected_keys = set(model.state_dict().keys())
+        loaded_keys = set()
+        unexpected_keys = []
 
-        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+        def load_weights(weights):
+            # Remove .base_layer from keys (e.g. LoRA-wrapped linear layers).
+            weights = {
+                key.replace(".base_layer.", "."): value
+                for key, value in weights.items()
+            }
+            loaded_keys.update(weights.keys())
+            _, shard_unexpected = model.load_state_dict(weights, strict=False)
+            unexpected_keys.extend(shard_unexpected)
+
+        if shard_files is not None:
+            import gc
+            for shard_file in shard_files:
+                shard_path = os.path.join(pretrained_model_name_or_path, shard_file)
+                print(f"Loading shard: {shard_path}")
+                shard_state_dict = load_file(shard_path)
+                load_weights(shard_state_dict)
+                del shard_state_dict
+                gc.collect()
+        elif state_dict is not None:
+            load_weights(state_dict)
+
+        missing_keys = sorted(expected_keys - loaded_keys)
             
         if missing_keys:
             print(f"Missing keys when loading pretrained weights: {missing_keys}")
