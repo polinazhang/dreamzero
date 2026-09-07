@@ -34,6 +34,9 @@ def episodes(root, limit=50):
     if not 1 <= limit <= 50:
         raise ValueError('RoboCasa episode limit must be 1..50')
     entries = [json.loads(line) for line in (Path(root) / 'meta/episodes.jsonl').read_text().splitlines()]
+    ids = [e['episode_index'] for e in entries]
+    if len(set(ids)) != len(ids) or len(entries) < limit:
+        raise ValueError(f'Expected at least {limit} unique episodes in {root}; found {len(entries)}')
     return sorted(entries, key=lambda e: e['episode_index'])[:limit]
 
 

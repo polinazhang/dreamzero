@@ -30,13 +30,17 @@ def main():
     parser.add_argument('--checkpoint', type=Path, default=root / 'models/dreamzero/checkpoints/DreamZero-DROID')
     parser.add_argument('--dataset-root', type=Path, default=root / 'datasets/robocasa/v1.0/target/atomic')
     parser.add_argument('--output-root', type=Path, default=root / 'results/dreamzero-static/robocasa')
-    parser.add_argument('--task-id', type=int, nargs='+', default=[2])
+    parser.add_argument('--task-id', type=int, nargs='+', default=[i for i in range(1, 19) if i != 5])
     parser.add_argument('--steps', type=int, default=None, help='1 through checkpoint default; omitted = full default')
     parser.add_argument('--max-episodes', type=int, default=50)
     parser.add_argument('--max-frames', type=int)
     parser.add_argument('--save_meta', type=boolean, nargs='?', const=True, default=True)
     parser.add_argument('--preflight', action='store_true', help='Inspect datasets without loading model')
     args = parser.parse_args()
+    if len(set(args.task_id)) != len(args.task_id):
+        parser.error('Task IDs must be unique')
+    if args.max_frames is not None and args.max_frames < 1:
+        parser.error('--max-frames must be positive')
     datasets = [(i, dataset_path(args.dataset_root, i)) for i in args.task_id]
     selected = [(i, path, episodes(path, args.max_episodes)) for i, path in datasets]
     inventory = [dict(task_id=i, task=TASKS[i-1], dataset=str(path),
