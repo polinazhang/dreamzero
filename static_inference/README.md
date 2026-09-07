@@ -37,20 +37,11 @@ runner, not a separate implementation. `--save_meta=False` disables only latent
 files; default is True. Debug limits `--max-episodes` and `--max-frames` are for
 validation; production defaults do not subsample frames.
 
-Validate a real sample and all three representative step counts before a full
-run:
-
-```bash
-sbatch --time=01:00:00 --output=static_inference/smoke-%j.out \
-  --error=static_inference/smoke-%j.err static_inference/run_robocasa.sbatch \
-  --task-id 2 --max-episodes 1 --max-frames 1 --validate-core
-```
-
-`--validate-core` checks bitwise no-grad forward parity with the original DiT and
-finite metrics at 1, half-default, and default steps, then saves a normal full-step
-frame. CPU tests run with `.venv/bin/python -m unittest static_inference.test_core`.
-A metadata-only inventory is available with `python -m
-static_inference.run_robocasa --preflight`.
+A smoke run uses `--max-episodes 1 --max-frames 1`; it executes only the
+requested denoising trajectory. No validation sweep or extra model forward runs
+inside inference. CPU tests are separate: `.venv/bin/python -m unittest
+static_inference.test_core`. A source inventory is available with
+`python -m static_inference.run_robocasa --preflight`.
 
 ## Mapping and preprocessing
 
@@ -102,7 +93,11 @@ dtype, device and shapes. The same tensors initialize denoising and define
 Targets retain the original training-path image normalization precision and
 model-facing action dtype. There is no additional training-noise sample. Each requested step count configures
 the original UniPC schedulers, including the head's shift and decoupling settings.
-Every step performs a joint forward; approximate DiT-step reuse is disabled.
+The original head's `should_run_model` controls prediction computation/reuse.
+Launchers do not override its DiT mask or dynamic-cache configuration. A scheduler
+step that reuses a flow still receives metrics at its own scheduler timestep;
+gradients differentiate that reused flow's original conditioning graph. There
+is no additional forward at the skipped step's latent input.
 
 Video flow is `unconditional + cfg_scale * (conditional - unconditional)`;
 action flow is the conditional branch, matching the flows sent to the original
@@ -145,8 +140,7 @@ Files are streamed as `.npy.partial` memory maps to avoid accumulating a whole
 episode's video fields in RAM. They are renamed to `.npy` only once every
 frame/step has been written, followed by an episode `COMPLETE` marker. Failed or
 time-limited episodes remain explicitly partial. `run.json` records selection
-and arguments, `validation.json` records real-checkpoint checks when requested,
-and a run-level `COMPLETE` appears only after every selected episode finishes.
+and arguments, and a run-level `COMPLETE` appears only after every selected episode finishes.
 
 ## DROID, YAM and OpenArm
 
@@ -187,7 +181,7 @@ sbatch static_inference/run_openarm.sbatch
 DROID and YAM allocations have one-day limits; OpenArm has two days. Each run
 loads its model once. The OpenArm run includes pick_cup, pour_ice, use_spoon and
 use_steel_spoon in that same process. All accept `--steps N`, `--max-episodes`,
-`--max-frames`, `--save_meta=False`, and `--validate-core`. Output defaults to
+`--max-frames`, and `--save_meta=False`. Output defaults to
 `results/dreamzero-static/{dataset}` with the array layout described above.
 
 CPU source preflight: `python -m static_inference.run_droid --preflight` (replace
@@ -200,3 +194,7 @@ UMT5 from the local cache, avoiding stale training-machine paths.
 
 The local YAM copy currently lacks `videos/observation.images.left`; preflight
 rejects this incomplete source. Restore that camera directory before running YAM.
+
+Runtime initialization follows `socket_test_optimized_AR.main`: TE attention and
+`torch._dynamo.config.recompile_limit = 800`, set before policy construction.
+The scheduler remains compiled exactly as in the original implementation.

@@ -232,25 +232,37 @@ class StaticInferenceCore:
         if head.ip_size != 1:
             raise ValueError("Static gradients require a single-process model; inference P2P is not differentiable")
         clip, y, prompts, caches, xa, xv, ua, uv, sv, sa = self.prepare(sample, steps)
+        prev_predictions = []
+        head.skip_countdown = 0
+        vp = ap = dc = dy = None
         for k, tv in enumerate(sv.timesteps):
             ta = sa.timesteps[k]
             at = torch.ones(xa.shape[:2], dtype=torch.int64, device=xa.device) * ta
             vt = torch.ones((xv.shape[0], xv.shape[2]), dtype=torch.int64, device=xv.device) * tv
             with attention_backward_context(head.model), torch.enable_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
-                dc = torch.zeros_like(clip, requires_grad=True)
-                dy = torch.zeros_like(y, requires_grad=True)
-                predictions = [static_dit_forward(head.model, xv.detach(), vt, prompt, y + dy, clip + dc,
-                                                 cache, action=xa.detach(), timestep_action=at,
-                                                 state=sample.inputs.state.to(torch.bfloat16), current_start_frame=1,
-                                                 checkpoint_blocks=self.checkpoint_blocks)[:2]
-                               for prompt, cache in zip(prompts, caches)]
-                vp, ap = predictions[0]
-                if len(predictions) == 2:
-                    vp = predictions[1][0] + head.cfg_scale * (vp - predictions[1][0])
+                if head.should_run_model(k, tv, prev_predictions):
+                    # Release the preceding cached prediction graph before the next forward.
+                    vp = ap = dc = dy = None
+                    dc = torch.zeros_like(clip, requires_grad=True)
+                    dy = torch.zeros_like(y, requires_grad=True)
+                    predictions = [static_dit_forward(head.model, xv.detach(), vt, prompt, y + dy, clip + dc,
+                                                     cache, action=xa.detach(), timestep_action=at,
+                                                     state=sample.inputs.state.to(torch.bfloat16), current_start_frame=1,
+                                                     checkpoint_blocks=self.checkpoint_blocks)[:2]
+                                   for prompt, cache in zip(prompts, caches)]
+                    vp, ap = predictions[0]
+                    if len(predictions) == 2:
+                        vp = predictions[1][0] + head.cfg_scale * (vp - predictions[1][0])
+                    prev_predictions.append((tv, vp.detach(), ap.detach()))
+                    if len(prev_predictions) > 2:
+                        prev_predictions.pop(0)
+                    del predictions
+                # Reused flows retain their original conditioning graph. Do not
+                # run a different forward at the current latents/timestep.
                 la, lv = flow_losses(ap, vp, ua, uv, sample.action_mask, sample.has_real_action,
                                      head.scheduler, at, vt)
                 ga = torch.autograd.grad(la, (dc, dy), retain_graph=True, allow_unused=True)
-                gv = torch.autograd.grad(lv, (dc, dy), allow_unused=True)
+                gv = torch.autograd.grad(lv, (dc, dy), retain_graph=True, allow_unused=True)
                 out = dict(step=k, action_loss=la.detach(), video_loss=lv.detach(),
                            cosine_action=cosine(ap.detach(), ua, sample.action_mask).detach(),
                            cosine_video=cosine(vp.detach(), uv[..., :vp.shape[3], :vp.shape[4]]).detach(),
@@ -262,6 +274,6 @@ class StaticInferenceCore:
             with torch.no_grad():
                 xv = sv.step(out["v_video"].transpose(1, 2), tv, xv.transpose(1, 2), step_index=k, return_dict=False)[0].transpose(1, 2).detach()
                 xa = sa.step(out["v_action"], ta, xa, step_index=k, return_dict=False)[0].detach()
-            # Release each step's graph before yielding to the streaming writer.
-            del predictions, vp, ap, la, lv, dc, dy, ga, gv
+            # Keep only the current prediction graph for the model's reuse policy.
+            del la, lv, ga, gv
             yield out

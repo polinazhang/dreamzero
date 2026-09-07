@@ -70,7 +70,6 @@ def main(dataset):
     parser.add_argument('--max-frames',type=int)
     parser.add_argument('--save_meta',type=boolean,nargs='?',const=True,default=True)
     parser.add_argument('--preflight',action='store_true',help='Validate all selected source addresses without loading weights')
-    parser.add_argument('--validate-core',action='store_true',help='GPU parity and step-count checks on the first sample')
     args=parser.parse_args()
     if not 1<=args.max_episodes<=spec['limit'] or args.steps<1:
         parser.error(f'--max-episodes must be 1..{spec["limit"]} and --steps must be positive')
@@ -98,7 +97,6 @@ def main(dataset):
                       action_offsets=adapter.action_offsets.tolist())
     (output/'run.json').write_text(json.dumps(run_metadata,default=str,indent=2)+'\n')
     print(f'OUTPUT={output}',flush=True)
-    validated=False
     for label,path,rows in selected:
         for entry in rows:
             episode=open_episode(dataset,path,entry)
@@ -113,10 +111,6 @@ def main(dataset):
                 for frame in range(frame_count):
                     started=time.monotonic()
                     sample=adapter.sample(episode,frame)
-                    if args.validate_core and not validated:
-                        from .validation import validate_core
-                        validate_core(core,sample,output)
-                        validated=True
                     for result in core.evaluate(sample,args.steps):
                         writer.write(frame,result)
                         print(f'dataset={label} episode={episode.index} frame={frame} step={result["step"]} '

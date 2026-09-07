@@ -11,6 +11,10 @@ def local_tokenizer():
 
 def load_policy(checkpoint, embodiment):
     import torch
+    # Match socket_test_optimized_AR.main before importing/constructing the policy.
+    # Its compiled autoregressive scheduler needs more than Dynamo's default 8 variants.
+    os.environ['ATTENTION_BACKEND'] = 'TE'
+    torch._dynamo.config.recompile_limit = 800
     import torch.distributed as dist
     from torch.distributed.device_mesh import init_device_mesh
     from groot.vla.data.schema import EmbodimentTag

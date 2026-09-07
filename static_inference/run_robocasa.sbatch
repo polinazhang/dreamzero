@@ -19,10 +19,6 @@ export XDG_CACHE_HOME="${DREAMZERO_ROOT}/.cache"
 export TRITON_CACHE_DIR="${TMPDIR:-/tmp}/dreamzero-static-triton-${SLURM_JOB_ID}"
 export TORCHINDUCTOR_CACHE_DIR="${TMPDIR:-/tmp}/dreamzero-static-inductor-${SLURM_JOB_ID}"
 export NO_ALBUMENTATIONS_UPDATE=1
-export ATTENTION_BACKEND=TE
-export NUM_DIT_STEPS=16
-export ENABLE_DIT_CACHE=false
-export DYNAMIC_CACHE_SCHEDULE=false
 export PYTHONPATH="${DREAMZERO_ROOT}:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 cd "${DREAMZERO_ROOT}"
