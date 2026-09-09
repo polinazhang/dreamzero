@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=DreamZero-robocasa-atomic
+#SBATCH --job-name=DreamZero-franka
 #SBATCH --partition=gpu-h100
 #SBATCH --account=gts-zk15
 #SBATCH --qos=inferno
@@ -23,5 +23,4 @@ export PYTHONPATH="${DREAMZERO_ROOT}:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 cd "${DREAMZERO_ROOT}"
 "${DREAMZERO_ROOT}/.venv/bin/python" -m torch.distributed.run --standalone --nproc_per_node=1 \
-    --module static_inference.run_robocasa \
-    --task-id 1 2 3 4 6 7 8 9 10 11 12 13 14 15 16 17 18 --max-episodes 50 "$@"
+    --module static_inference.run_franka "$@"

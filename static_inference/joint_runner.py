@@ -13,11 +13,14 @@ from .storage import EpisodeWriter
 
 
 def configurations(root):
+    from .franka import DATA_ROOT, FrankaAdapter
     from .droid import DroidAdapter
     from .yam import YamAdapter
     from .openarm import DATASETS, OpenArmAdapter
     checkpoints=root/'models/dreamzero/checkpoints'
     return {
+        'franka':dict(checkpoint=checkpoints/'DreamZero-DROID',embodiment='oxe_droid',adapter=FrankaAdapter,
+                      limit=3,datasets=[(p.parent.parent.name,p.parent.parent) for p in sorted(DATA_ROOT.glob('*/meta/info.json'))]),
         'droid':dict(checkpoint=checkpoints/'DreamZero-DROID',embodiment='oxe_droid',adapter=DroidAdapter,
                      limit=100,datasets=[('droid',root/'datasets/droid_100/1.0.0')]),
         'yam':dict(checkpoint=checkpoints/'DreamZero-AgiBot',embodiment='agibot',adapter=YamAdapter,
@@ -39,6 +42,9 @@ def open_episode(dataset,path,entry):
     if dataset=='droid':
         from .droid_source import DroidEpisode
         return DroidEpisode(entry)
+    if dataset=='franka':
+        from .franka import FrankaEpisode
+        return FrankaEpisode(path,entry)
     if dataset=='yam':
         from .yam import YamEpisode
         return YamEpisode(path,entry)
@@ -77,7 +83,9 @@ def main(dataset):
         parser.error('--max-frames must be positive')
     datasets=spec['datasets']
     if args.dataset_root:
-        datasets=[(label,args.dataset_root/label if dataset=='openarm' else args.dataset_root) for label,_ in datasets]
+        datasets=[(label,args.dataset_root/label if dataset in ('openarm','franka') else args.dataset_root) for label,_ in datasets]
+    if not datasets:
+        raise FileNotFoundError(f'No dataset subsets found for {dataset}')
     selected=[(label,path,entries(dataset,path,args.max_episodes)) for label,path in datasets]
     inventory=[dict(dataset=label,path=str(path),episodes=rows) for label,path,rows in selected]
     print(json.dumps({'dataset':dataset,'checkpoint':str(args.checkpoint),'steps':args.steps,
